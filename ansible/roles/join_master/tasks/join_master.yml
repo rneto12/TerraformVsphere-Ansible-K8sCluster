@@ -1,0 +1,56 @@
+# Join Masters nodes
+
+
+- name: Wait 300 seconds, but only start checking after 10 seconds
+  wait_for_connection:
+    delay: 10
+    timeout: 300
+
+- name: ping loadbalance
+  shell: ping -c4 cluster1k8lb.domain.local
+
+- name: Get ip
+  shell: hostname -i | cut -d " " -f3
+  register: ipadd
+
+- name: Get hostname
+  shell: hostname
+  register: hostname
+
+- name: Add to loadbalancer
+  delegate_to: 10.10.3.14
+  lineinfile:
+    path: /etc/haproxy/haproxy.cfg
+    insertafter: 'server cluster1k8m1 10.10.3.15:6443 check fall 3 rise 2'
+    line: '        server {{ hostname.stdout }} {{ ipadd.stdout }}:6443 check fall 3 rise 2'
+
+- name: Reload haproxy
+  delegate_to: 10.10.3.14
+  service:
+    name: haproxy
+    state: restarted
+
+- name: Copying token to additional master nodes
+  copy: src=master_token_file dest=master_join
+
+- name: Joining additional master nodes to cluster
+  shell: cat master_join | sh -
+
+- name: Joining additional master nodes to cluster
+  shell: rm master_join
+
+# Resuming master config
+
+- name: Enable kubectl and completion
+  shell: |
+    mkdir /root/.kube
+    cp /etc/kubernetes/admin.conf /root/.kube/config
+    echo "source <(kubectl completion bash)" >> /root/.bashrc
+
+- name: Install helm
+  shell: |
+    curl https://helm.baltorepo.com/organization/signing.asc | sudo apt-key add -
+    sudo apt-get install apt-transport-https --yes
+    echo "deb https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+    sudo apt-get update
+    sudo apt-get install helm -y

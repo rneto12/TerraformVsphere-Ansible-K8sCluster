@@ -1,0 +1,24 @@
+---
+# Vars for install_master
+
+pkgs: 
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - software-properties-common
+  - net-tools
+  - unattended-upgrades
+  - gnupg
+  - lsb-release
+  - bash-completion
+  - nfs-common
+
+dck:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+
+k8s:
+  - kubelet
+  - kubeadm
+  - kubectl

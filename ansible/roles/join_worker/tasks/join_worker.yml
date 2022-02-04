@@ -1,0 +1,18 @@
+# Join Worker nodes
+
+
+- name: Wait 300 seconds, but only start checking after 15 seconds
+  wait_for_connection:
+    delay: 15
+    timeout: 300
+    
+- name: Copying token to worker nodes
+  copy: src=worker_token_file dest=worker_join
+
+- name: Joining worker nodes with kubernetes master
+  shell: cat worker_join | sh -
+
+- name: Joining additional master nodes to cluster
+  shell: rm worker_join
+
+

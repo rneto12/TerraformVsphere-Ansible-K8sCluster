@@ -1,0 +1,130 @@
+# Install Kubernetes addons
+
+
+- name: Wait 300 seconds, but only start checking after 15 seconds
+  wait_for_connection:
+    delay: 15
+    timeout: 300
+
+- name: Initializing Kubernetes CNI
+  shell: kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+
+- name: Install helm
+  shell: |
+    curl https://helm.baltorepo.com/organization/signing.asc | sudo apt-key add -
+    sudo apt-get install apt-transport-https --yes
+    echo "deb https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+    sudo apt-get update
+    sudo apt-get install helm -y
+
+- name: Waiting
+  shell: sleep 20s
+
+- name: Kubernetes modules
+  shell: wget https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml -O metrics-server.yaml
+
+- name: Metrics edit
+  lineinfile:
+    path: metrics-server.yaml
+    insertafter: '- --secure-port=443'
+    line: '        - --kubelet-insecure-tls'
+
+- name: Metrics deploy
+  shell: kubectl apply -f metrics-server.yaml
+
+
+
+# I know all versions are old, but that's what I used. Feel free to update whatever you want ;D
+
+
+- name: Metallb deploy
+  shell: |
+    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.10.0/manifests/namespace.yaml
+    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.10.0/manifests/metallb.yaml
+#    kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
+
+- name: copy Metallb configmap
+  copy: src=metallb-configmap.yml dest=metallb-configmap.yml
+
+- name: apply metallb configmap
+  shell: kubectl apply -f metallb-configmap.yml
+
+
+- name: deploy ingress controller
+  shell: |
+    kubectl create ns ingress-nginx
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+    helm -n ingress-nginx install nginx-ingress ingress-nginx/ingress-nginx --set controller.publishService.enabled=true
+
+- name: prepare to deploy cert-manager
+  shell: |
+    kubectl create ns cert-manager
+    helm repo add jetstack https://charts.jetstack.io
+    helm repo update
+
+- name: Deploy cert-manager
+  shell: |
+    kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.3.1/cert-manager.crds.yaml
+    helm install cert-manager jetstack/cert-manager --namespace cert-manager --version v1.3.1 --create-namespace --set 'extraArgs={--dns01-recursive-nameservers=200.129.209.23:53\,200.129.209.7:53}'
+
+- name: Copy yaml config
+  copy:
+    src: "{{ item }}"
+    dest: "{{ item }}"
+  loop:
+    - clusterissuer-prod-dns.yml
+    - clusterissuer-prod-http.yml
+    - clusterissuer-staging-dns.yml
+    - clusterissuer-staging-http.yml
+
+
+## If you don't have a bind server, comment these two lines below. Comment also lines 91 and 96
+- name: create cert-manager secret dnssec
+  shell: kubectl -n cert-manager create secret generic tsig-secret --from-literal=tsig-secret-key="BIND secret here"
+
+- name: Waiting cert-manager boot
+  shell: sleep 30
+
+- name: Create clusterissuer prod
+  shell: |
+    kubectl create -f clusterissuer-prod-dns.yml
+    kubectl create -f clusterissuer-prod-http.yml
+
+- name: Create clusterissuer staging
+  shell: |
+    kubectl create -f clusterissuer-staging-dns.yml
+    kubectl create -f clusterissuer-staging-http.yml
+
+- name: install istio
+  shell: |
+    cd /tmp
+    curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.10.1 sh -
+    mv istio-1.10.1/ /opt/
+    cp /opt/istio-1.10.1/tools/istioctl.bash ~
+    mv ~/istioctl.bash ~/.istioctl.bash
+    echo "source ~/.istioctl.bash" >> .bashrc
+    sudo chown root:root /opt/istio-1.10.1/ -R
+    sudo chmod 751 /opt/istio-1.10.1/ 
+    sudo chmod 751 /opt/istio-1.10.1/bin -R
+    sudo chmod 751 /opt/istio-1.10.1/tools
+    export PATH=/opt/istio-1.10.1/bin:$PATH
+    istioctl profile list
+    istioctl install -y
+    kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.10/samples/addons/prometheus.yaml
+    kubectl create namespace kiali-operator 
+    helm install --set cr.create=true --set cr.namespace=istio-system --namespace kiali-operator --repo https://kiali.org/helm-charts kiali-operator kiali-operator
+
+- name: Set working namespaces
+  shell: |
+    kubectl create namespace {{ item }}
+    kubectl label ns {{ item }} istio-injection=enabled
+  loop:
+    - namespace1
+    - namespace2
+    - namespace3
+
+# Del cluster token files from local ansible server
+- name: Cleanup tokens
+  connection: local
+  local_action: shell rm *_token_file

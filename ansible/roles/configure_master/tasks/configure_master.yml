@@ -1,0 +1,40 @@
+# Configure Masters nodes
+
+
+
+- name: Wait 300 seconds, but only start checking after 10 seconds
+  wait_for_connection:
+    delay: 10
+    timeout: 300
+
+- name: ping loadbalance
+  shell: ping -c4 cluster1k8lb.domain.local
+
+- name: Initializing Kubernetes cluster
+  shell: kubeadm init --control-plane-endpoint=cluster1k8lb.domain.local:6443 --pod-network-cidr='10.171.0.0/16' --upload-certs
+  register: output
+
+- name: Storing Logs and Generated token for future purpose.
+  connection: local
+  local_action: copy content="{{ output.stdout }}" dest="token_file" 
+
+- name: Get join control-plane command.
+  connection: local
+  local_action: shell grep -A2 -i '  kubeadm join' token_file | sed -e 's/[\t]*//g' | tr '\n' ' ' | sed 's/\\//g' | sed 's/  / /g' > master_token_file
+
+- name: Get join worker command.
+  connection: local
+  local_action: shell grep -A1 -i "kubeadm join" token_file | grep -v '  ' | grep -A1 'kubeadm' | sed -e 's/[\t]*//g' | tr '\n' ' ' | sed 's/\\//g' | sed 's/  / /g' > worker_token_file
+
+- name: Get join worker command.
+  connection: local
+  local_action: shell rm token_file
+
+- name: Enable kubectl and completion
+  shell: |
+    mkdir /root/.kube
+    cp /etc/kubernetes/admin.conf /root/.kube/config
+    echo "source <(kubectl completion bash)" >> /root/.bashrc
+
+- name: Wait cluster boot
+  shell: sleep 30
